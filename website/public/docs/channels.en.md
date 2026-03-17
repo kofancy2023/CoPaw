@@ -400,6 +400,8 @@ If you need a proxy (e.g. for network restrictions):
 
 5. In **Developer settings**, get **AppID** and **AppSecret** (ClientSecret) and fill them into config (see below). Add your server’s **IP to the whitelist** — only whitelisted IPs can call the Open API outside sandbox.
 
+   > **Tip:** If you are using ModelScope Creative Space to deploy CoPaw, the IP whitelist for QQ channel should be: `47.92.200.108`
+
 ![1](https://img.alicdn.com/imgextra/i4/O1CN012UQWI21cnvBAUcz54_!!6000000003646-2-tps-4082-2126.png)
 
 6. In sandbox config, scan the QR code with QQ to add the bot to your message list
@@ -426,6 +428,58 @@ them into a single token.
 You can also fill them in the Console UI.
 
 ![1](https://img.alicdn.com/imgextra/i1/O1CN013zS1dF1hLal9IM4rc_!!6000000004261-2-tps-4082-2126.png)
+
+---
+
+## WeCom (WeChat Work)
+
+### Create a new enterprise
+
+Individual users can first register an account, create a new enterprise, and become an enterprise administrator.
+
+![Create enterprise](https://img.alicdn.com/imgextra/i2/O1CN01Xg8B3i1EQWAKt5xj0_!!6000000000346-2-tps-2938-1588.png)
+
+![New account](https://img.alicdn.com/imgextra/i2/O1CN01QzuScv26w6je9Yypg_!!6000000007725-2-tps-2938-1592.png)
+
+If you already have a WeCom account or are a regular employee of an enterprise, you can directly create an API-mode robot in your current enterprise.
+
+### Create a bot
+
+You can create a bot in the admin console by clicking Management Tools → Smart Robot → Create Robot, and select API Mode → Configure via Long Connection.
+
+![Create robot 1](https://img.alicdn.com/imgextra/i2/O1CN01n4qAEI1deajLveo2B_!!6000000003761-2-tps-2938-1590.png)
+
+![Create robot 2](https://img.alicdn.com/imgextra/i4/O1CN01kZDNVk1ugHf73ybs2_!!6000000006066-2-tps-2938-1594.png)
+
+![Create robot 3](https://img.alicdn.com/imgextra/i1/O1CN01Znm7aQ1Tfpe5Ha9WL_!!6000000002410-2-tps-1482-992.png)
+
+### Bind the bot
+
+You can bind the bot by filling in the Bot ID and Secret in the Console or `config.json`.
+
+**Method 1:** Fill in the Console
+
+![Bind robot](https://img.alicdn.com/imgextra/i2/O1CN01X8NcEj1NrqL0e3AMS_!!6000000001624-2-tps-2732-1390.png)
+
+**Method 2:** Fill in `config.json` (default file path is `~/.copaw/config.json`)
+
+Find `wecom` and fill in the corresponding information, for example:
+
+```json
+"wecom": {
+  "enabled": true,
+  "dm_policy": "open",
+  "group_policy": "open",
+  "bot_id": "your bot_id",
+  "secret": "your secret",
+  "media_dir": "~/.copaw/media",
+  "max_reconnect_attempts": -1
+}
+```
+
+### Start chatting with the bot in WeCom
+
+![Start using](https://img.alicdn.com/imgextra/i3/O1CN01ZsmpYr1tq4ViIbO80_!!6000000005952-2-tps-1308-1130.png)
 
 ---
 
@@ -484,18 +538,197 @@ It is recommended to configure the following in `@BotFather`:
 
 ---
 
+## Mattermost
+
+The Mattermost channel uses WebSockets for real-time monitoring and REST APIs for replies. It supports both direct messages and group chats, using **Threads** to isolate conversation contexts in channels.
+
+### Get credentials
+
+1. Create a **Bot Account** in Mattermost (System Console → Integrations → Bot Accounts).
+2. Grant necessary permissions (e.g., `Post all`) and obtain the **Access Token**.
+3. Configure the **URL** and **Token** in the Console or `config.json`.
+
+### Core Config
+
+| Field                             | Description                                                               | Default  |
+| --------------------------------- | ------------------------------------------------------------------------- | -------- |
+| **url**                           | Full URL of your Mattermost instance                                      | -        |
+| **bot_token**                     | Bot Access Token                                                          | -        |
+| **show_typing**                   | Whether to show the "typing..." indicator                                 | `true`   |
+| **thread_follow_without_mention** | Whether to respond without @mention in threads the bot has already joined | `false`  |
+| **dm_policy**                     | DM policy: `open` (allow all) or `allowlist` (whitelist only)             | `"open"` |
+| **group_policy**                  | Group policy: `open` (allow all) or `allowlist` (whitelist only)          | `"open"` |
+| **allow_from**                    | List of allowed User IDs (effective if policy is `allowlist`)             | `[]`     |
+| **deny_message**                  | Automatic reply when access is denied by the whitelist                    | `""`     |
+
+> **Note**: The `session_id` for Mattermost is fixed as `mattermost_dm:{mm_channel_id}` for DMs and isolated by Thread ID for group chats. Recent history is automatically fetched as context supplement only upon the first trigger of a session.
+
+---
+
+## MQTT
+
+### About
+
+Currently, only text and JSON format messages are supported.
+
+JSON message format
+
+```
+{
+  "text": "...",
+  "redirect_client_id": "..."
+}
+```
+
+### Basic Configuration
+
+| Description     | Field           | Required field | Example                 |
+| --------------- | --------------- | -------------- | ----------------------- |
+| MQTT Host       | host            | Y              | 127.0.0.1               |
+| MQTT Port       | port            | Y              | 1883                    |
+| Transport       | transport       | Y              | tcp                     |
+| Clean Session   | clean_session   | Y              | true                    |
+| QoS             | qos             | Y              | 2                       |
+| MQTT Username   | username        | N              |                         |
+| MQTT Password   | password        | N              |                         |
+| Subscribe Topic | subscribe_topic | Y              | server/+/up             |
+| Publish Topic   | publish_topic   | Y              | client/{client_id}/down |
+| TLS Enabled     | tls_enabled     | N              | false                   |
+| TLS CA Certs    | tls_ca_certs    | N              | /tsl/ca.pem             |
+| TLS Certfile    | tls_certfile    | N              | /tsl/client.pem         |
+| TLS Keyfile     | tls_keyfile     | N              | /tsl/client.key         |
+
+### Topic
+
+1. Simple subscription and push
+
+   | subscribe_topic | publish_topic |
+   | --------------- | ------------- |
+   | server          | client        |
+
+2. Fuzzy match subscription and automatic push
+
+   Subscribe to the wildcard topic `/server/+/up`. Messages will be automatically pushed to the corresponding topic based on the client's `client_id`. For example, after a client pushes a message to `/server/client_a/up`, OpenClaw will push the message to `/client/client_b/down` after processing.
+
+   | subscribe_topic | publish_topic           |
+   | --------------- | ----------------------- |
+   | server/+/up     | client/{client_id}/down |
+
+3. Redirected topic push
+
+   The message sent is in JSON format. The subscription topic is `server/client_a/up`, and the push topic is `client/client_a/down`.
+
+   ```json
+   {
+     "text": "Tell me a joke, return the result in plain text",
+     "redirect_client_id": "client_b"
+   }
+   ```
+
+   Messages will be pushed to `client/client_b/down` based on the `redirect_client_id` attribute, enabling cross-topic push. In IoT scenarios, with OpenClaw as the core, autonomous message pushing between multiple devices can be achieved according to individual requirements.
+
+---
+
+## Matrix
+
+The Matrix channel connects CoPaw to any Matrix homeserver using the [matrix-nio](https://github.com/poljar/matrix-nio) library. It supports text messaging in both direct messages and group rooms.
+
+### Create a Matrix bot account and get an access token
+
+1. Create a bot account on any Matrix homeserver (e.g. [matrix.org](https://matrix.org) — register at [app.element.io](https://app.element.io/#/register)).
+
+2. Get the bot's **access token**. The easiest way is via Element:
+
+   - Log in as the bot account at [app.element.io](https://app.element.io)
+   - Go to **Settings → Help & About → Advanced → Access Token**
+   - Copy the token (it starts with `syt_...`)
+
+   Alternatively, use the Matrix Client-Server API directly:
+
+   ```bash
+   curl -X POST "https://matrix.org/_matrix/client/v3/login" \
+     -H "Content-Type: application/json" \
+     -d '{"type":"m.login.password","user":"@yourbot:matrix.org","password":"yourpassword"}'
+   ```
+
+   The response includes `access_token`.
+
+3. Note your bot's **User ID** (format: `@username:homeserver`, e.g. `@mybot:matrix.org`) and the **Homeserver URL** (e.g. `https://matrix.org`).
+
+### Configure the channel
+
+**Method 1:** Configure in the Console
+
+Go to **Control → Channels**, click **Matrix**, enable it, and fill in:
+
+- **Homeserver URL** — e.g. `https://matrix.org`
+- **User ID** — e.g. `@mybot:matrix.org`
+- **Access Token** — the token you copied above (shown as a password field)
+
+**Method 2:** Edit `~/.copaw/config.json`
+
+Find `channels.matrix` in `config.json`:
+
+```json
+"matrix": {
+  "enabled": true,
+  "bot_prefix": "[BOT]",
+  "homeserver": "https://matrix.org",
+  "user_id": "@mybot:matrix.org",
+  "access_token": "syt_..."
+}
+```
+
+Save the file; the channel will reload automatically if CoPaw is already running.
+
+### Chat with the bot
+
+Invite the bot to a room or send it a direct message from any Matrix client (e.g. Element). The bot listens for messages in all rooms it has joined.
+
+### Notes
+
+- The Matrix channel is **text-only** (no image/file attachments in the current version).
+- Only rooms the bot has already joined are monitored. Invite the bot to a room before sending messages.
+- For self-hosted homeservers, set `homeserver` to your server's base URL (e.g. `https://matrix.example.com`).
+
+---
+
+## XiaoYi
+
+The XiaoYi channel connects CoPaw via **A2A (Agent-to-Agent) protocol** over WebSocket to Huawei's AI assistant platform.
+
+### Get credentials
+
+1. Create an agent in the XiaoYi Open Platform.
+2. Obtain **AK** (Access Key), **SK** (Secret Key), and **Agent ID**.
+
+### Core Config
+
+| Field        | Description             | Default                                          |
+| ------------ | ----------------------- | ------------------------------------------------ |
+| **ak**       | Access Key              | -                                                |
+| **sk**       | Secret Key              | -                                                |
+| **agent_id** | Agent unique identifier | -                                                |
+| **ws_url**   | WebSocket URL           | `wss://hag.cloud.huawei.com/openclaw/v1/ws/link` |
+
+---
+
 ## Appendix
 
 ### Config overview
 
-| Channel  | Config key | Main fields                                                             |
-| -------- | ---------- | ----------------------------------------------------------------------- |
-| DingTalk | dingtalk   | client_id, client_secret                                                |
-| Feishu   | feishu     | app_id, app_secret; optional encrypt_key, verification_token, media_dir |
-| iMessage | imessage   | db_path, poll_sec (macOS only)                                          |
-| Discord  | discord    | bot_token; optional http_proxy, http_proxy_auth                         |
-| QQ       | qq         | app_id, client_secret                                                   |
-| Telegram | telegram   | bot_token; optional http_proxy, http_proxy_auth                         |
+| Channel    | Config key | Main fields                                                             |
+| ---------- | ---------- | ----------------------------------------------------------------------- |
+| DingTalk   | dingtalk   | client_id, client_secret                                                |
+| Feishu     | feishu     | app_id, app_secret; optional encrypt_key, verification_token, media_dir |
+| iMessage   | imessage   | db_path, poll_sec (macOS only)                                          |
+| Discord    | discord    | bot_token; optional http_proxy, http_proxy_auth                         |
+| QQ         | qq         | app_id, client_secret                                                   |
+| WeCom      | wecom      | bot_id, secret; optional media_dir, max_reconnect_attempts              |
+| Telegram   | telegram   | bot_token; optional http_proxy, http_proxy_auth                         |
+| Mattermost | mattermost | url, bot_token; optional show_typing, dm_policy, allow_from             |
+| Matrix     | matrix     | homeserver, user_id, access_token                                       |
+| XiaoYi     | xiaoyi     | ak, sk, agent_id; optional ws_url                                       |
 
 Field details and structure are in the tables above and [Config & working dir](./config).
 
@@ -506,14 +739,18 @@ video, audio, and file varies by channel.
 **✓** = supported. **🚧** = under construction (implementable but not yet
 done). **✗** = not supported (not possible on this channel).
 
-| Channel  | Recv text | Recv image | Recv video | Recv audio | Recv file | Send text | Send image | Send video | Send audio | Send file |
-| -------- | --------- | ---------- | ---------- | ---------- | --------- | --------- | ---------- | ---------- | ---------- | --------- |
-| DingTalk | ✓         | ✓          | ✓          | ✓          | ✓         | ✓         | ✓          | ✓          | ✓          | ✓         |
-| Feishu   | ✓         | ✓          | ✓          | ✓          | ✓         | ✓         | ✓          | ✓          | ✓          | ✓         |
-| Discord  | ✓         | ✓          | ✓          | ✓          | ✓         | ✓         | 🚧         | 🚧         | 🚧         | 🚧        |
-| iMessage | ✓         | ✗          | ✗          | ✗          | ✗         | ✓         | ✗          | ✗          | ✗          | ✗         |
-| QQ       | ✓         | 🚧         | 🚧         | 🚧         | 🚧        | ✓         | 🚧         | 🚧         | 🚧         | 🚧        |
-| Telegram | ✓         | ✓          | ✓          | ✓          | ✓         | ✓         | ✓          | ✓          | ✓          | ✓         |
+| Channel    | Recv text | Recv image | Recv video | Recv audio | Recv file | Send text | Send image | Send video | Send audio | Send file |
+| ---------- | --------- | ---------- | ---------- | ---------- | --------- | --------- | ---------- | ---------- | ---------- | --------- |
+| DingTalk   | ✓         | ✓          | ✓          | ✓          | ✓         | ✓         | ✓          | ✓          | ✓          | ✓         |
+| Feishu     | ✓         | ✓          | ✓          | ✓          | ✓         | ✓         | ✓          | ✓          | ✓          | ✓         |
+| Discord    | ✓         | ✓          | ✓          | ✓          | ✓         | ✓         | 🚧         | 🚧         | 🚧         | 🚧        |
+| iMessage   | ✓         | ✗          | ✗          | ✗          | ✗         | ✓         | ✗          | ✗          | ✗          | ✗         |
+| QQ         | ✓         | 🚧         | 🚧         | 🚧         | 🚧        | ✓         | 🚧         | 🚧         | 🚧         | 🚧        |
+| WeCom      | ✓         | ✓          | 🚧         | ✓          | ✓         | ✓         | 🚧         | 🚧         | 🚧         | 🚧        |
+| Telegram   | ✓         | ✓          | ✓          | ✓          | ✓         | ✓         | ✓          | ✓          | ✓          | ✓         |
+| Mattermost | ✓         | ✓          | 🚧         | 🚧         | ✓         | ✓         | ✓          | 🚧         | 🚧         | ✓         |
+| Matrix     | ✓         | ✓          | ✓          | ✓          | ✓         | ✓         | ✓          | ✓          | ✓          | ✓         |
+| XiaoYi     | ✓         | 🚧         | 🚧         | 🚧         | 🚧        | ✓         | 🚧         | 🚧         | 🚧         | 🚧        |
 
 Notes:
 
@@ -529,6 +766,9 @@ Notes:
 - **QQ**: Receiving attachments as multimodal and sending real media are 🚧;
   currently text + link-only.
 - **Telegram**: Attachments are parsed as files on receive and can be opened in the corresponding format (image / voice / video / file) within the Telegram chat interface.
+- **WeCom**: WebSocket long connection for receiving; markdown/template_card for sending. Supports text, image, voice, and file receiving; sending media is not supported by the SDK (only text via markdown).
+- **Matrix**: Receives image, video, audio, and file attachments via `mxc://` media URLs. Sends media by uploading to the homeserver and sending native Matrix media messages (`m.image`, `m.video`, `m.audio`, `m.file`).
+- **XiaoYi**: Text only; media support is 🚧.
 
 ### Changing config via HTTP
 

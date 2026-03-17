@@ -19,6 +19,10 @@ const CHANNELS_WITH_ACCESS_CONTROL: ChannelKey[] = [
   "dingtalk",
   "discord",
   "feishu",
+  "wecom",
+  "mattermost",
+  "matrix",
+  "xiaoyi",
 ];
 
 interface ChannelDrawerProps {
@@ -43,6 +47,11 @@ const CHANNEL_DOC_URLS: Partial<Record<ChannelKey, string>> = {
   discord: "https://copaw.agentscope.io/docs/channels/#Discord",
   qq: "https://copaw.agentscope.io/docs/channels/#QQ",
   telegram: "https://copaw.agentscope.io/docs/channels/#Telegram",
+  mqtt: "https://copaw.agentscope.io/docs/channels/#MQTT",
+  mattermost: "https://copaw.agentscope.io/docs/channels/#Mattermost",
+  matrix: "https://copaw.agentscope.io/docs/channels/#Matrix",
+  xiaoyi:
+    "https://developer.huawei.com/consumer/cn/doc/service/openclaw-0000002518410344",
 };
 const twilioConsoleUrl = "https://console.twilio.com";
 
@@ -89,6 +98,14 @@ export function ChannelDrawer({
         />
       </Form.Item>
       <Form.Item
+        name="require_mention"
+        label={t("channels.requireMention")}
+        valuePropName="checked"
+        tooltip={t("channels.requireMentionTooltip")}
+      >
+        <Switch />
+      </Form.Item>
+      <Form.Item
         name="allow_from"
         label={t("channels.allowFrom")}
         tooltip={t("channels.allowFromTooltip")}
@@ -106,6 +123,32 @@ export function ChannelDrawer({
   // Renders builtin channel-specific fields
   const renderBuiltinExtraFields = (key: ChannelKey) => {
     switch (key) {
+      case "matrix":
+        return (
+          <>
+            <Form.Item
+              name="homeserver"
+              label="Homeserver URL"
+              rules={[{ required: true }]}
+            >
+              <Input placeholder="https://matrix.org" />
+            </Form.Item>
+            <Form.Item
+              name="user_id"
+              label="User ID"
+              rules={[{ required: true }]}
+            >
+              <Input placeholder="@bot:matrix.org" />
+            </Form.Item>
+            <Form.Item
+              name="access_token"
+              label="Access Token"
+              rules={[{ required: true }]}
+            >
+              <Input.Password placeholder="syt_..." />
+            </Form.Item>
+          </>
+        );
       case "imessage":
         return (
           <>
@@ -212,6 +255,138 @@ export function ChannelDrawer({
             </Form.Item>
           </>
         );
+      case "mqtt":
+        return (
+          <>
+            <Form.Item
+              name="host"
+              label="MQTT Host"
+              rules={[{ required: true }]}
+            >
+              <Input placeholder="127.0.0.1" />
+            </Form.Item>
+            <Form.Item
+              name="port"
+              label="MQTT Port"
+              rules={[
+                { required: true },
+                {
+                  type: "number",
+                  min: 1,
+                  max: 65535,
+                  message: "Port must be between 1 and 65535",
+                },
+              ]}
+            >
+              <InputNumber
+                min={1}
+                max={65535}
+                style={{ width: "100%" }}
+                placeholder="1883"
+              />
+            </Form.Item>
+            <Form.Item
+              name="transport"
+              label="Transport"
+              initialValue="tcp"
+              rules={[{ required: true }]}
+            >
+              <Select>
+                <Select.Option value="tcp">MQTT (tcp)</Select.Option>
+                <Select.Option value="websockets">
+                  WS (websockets)
+                </Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item
+              name="clean_session"
+              label="Clean Session"
+              valuePropName="checked"
+            >
+              <Switch defaultChecked />
+            </Form.Item>
+            <Form.Item
+              name="qos"
+              label="QoS"
+              initialValue="2"
+              rules={[{ required: true }]}
+            >
+              <Select>
+                <Select.Option value="0">At Most Once (0)</Select.Option>
+                <Select.Option value="1">At Least Once (1)</Select.Option>
+                <Select.Option value="2">Exactly Once (2)</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item name="username" label="MQTT Username">
+              <Input placeholder="Leave blank to disable / not use" />
+            </Form.Item>
+            <Form.Item name="password" label="MQTT Password">
+              <Input.Password placeholder="Leave blank to disable / not use" />
+            </Form.Item>
+            <Form.Item
+              name="subscribe_topic"
+              label="Subscribe Topic"
+              rules={[{ required: true }]}
+            >
+              <Input placeholder="server/+/up" />
+            </Form.Item>
+            <Form.Item
+              name="publish_topic"
+              label="Publish Topic"
+              rules={[{ required: true }]}
+            >
+              <Input placeholder="client/{client_id}/down" />
+            </Form.Item>
+            <Form.Item
+              name="tls_enabled"
+              label="TLS Enabled"
+              valuePropName="checked"
+            >
+              <Switch />
+            </Form.Item>
+            <Form.Item name="tls_ca_certs" label="TLS CA Certs">
+              <Input placeholder="Path to CA certificates file" />
+            </Form.Item>
+            <Form.Item name="tls_certfile" label="TLS Certfile">
+              <Input placeholder="Path to client certificate file" />
+            </Form.Item>
+            <Form.Item name="tls_keyfile" label="TLS Keyfile">
+              <Input placeholder="Path to client private key file" />
+            </Form.Item>
+          </>
+        );
+      case "mattermost":
+        return (
+          <>
+            <Form.Item
+              name="url"
+              label="Mattermost URL"
+              rules={[{ required: true }]}
+            >
+              <Input placeholder="https://mattermost.example.com" />
+            </Form.Item>
+            <Form.Item name="bot_token" label="Bot Token">
+              <Input.Password placeholder="Mattermost bot token" />
+            </Form.Item>
+            <Form.Item name="media_dir" label="Media Dir">
+              <Input placeholder="~/.copaw/media/mattermost" />
+            </Form.Item>
+            <Form.Item
+              name="show_typing"
+              label="Show Typing"
+              valuePropName="checked"
+            >
+              <Switch />
+            </Form.Item>
+            <Form.Item
+              name="thread_follow_without_mention"
+              label="Thread Follow Without Mention"
+              valuePropName="checked"
+            >
+              <Switch />
+            </Form.Item>
+          </>
+        );
       case "voice":
         return (
           <>
@@ -260,6 +435,70 @@ export function ChannelDrawer({
               label={t("channels.welcomeGreeting")}
             >
               <Input.TextArea rows={2} />
+            </Form.Item>
+          </>
+        );
+      case "wecom":
+        return (
+          <>
+            <Form.Item
+              name="bot_id"
+              label="Bot ID"
+              rules={[{ required: true, message: "Please input Bot ID" }]}
+            >
+              <Input placeholder="Bot ID from WeCom backend" />
+            </Form.Item>
+            <Form.Item
+              name="secret"
+              label="Secret"
+              rules={[{ required: true, message: "Please input Secret" }]}
+            >
+              <Input.Password placeholder="Secret from WeCom backend" />
+            </Form.Item>
+            <Form.Item name="media_dir" label="Media Dir">
+              <Input placeholder="~/.copaw/media" />
+            </Form.Item>
+            <Form.Item
+              name="welcome_text"
+              label={t("channels.welcomeText")}
+              tooltip={t("channels.welcomeTextTooltip")}
+            >
+              <Input placeholder={t("channels.welcomeTextPlaceholder")} />
+            </Form.Item>
+          </>
+        );
+      case "xiaoyi":
+        return (
+          <>
+            <Alert
+              type="info"
+              showIcon
+              message={t("channels.xiaoyiSetupGuide")}
+              style={{ marginBottom: 16 }}
+            />
+            <Form.Item
+              name="ak"
+              label="Access Key (AK)"
+              rules={[{ required: true, message: "Please input Access Key" }]}
+            >
+              <Input placeholder="Access Key from Huawei Developer Platform" />
+            </Form.Item>
+            <Form.Item
+              name="sk"
+              label="Secret Key (SK)"
+              rules={[{ required: true, message: "Please input Secret Key" }]}
+            >
+              <Input.Password placeholder="Secret Key from Huawei Developer Platform" />
+            </Form.Item>
+            <Form.Item
+              name="agent_id"
+              label="Agent ID"
+              rules={[{ required: true, message: "Please input Agent ID" }]}
+            >
+              <Input placeholder="Agent ID from XiaoYi platform" />
+            </Form.Item>
+            <Form.Item name="ws_url" label="WebSocket URL">
+              <Input placeholder="wss://hag.cloud.huawei.com/openclaw/v1/ws/link" />
             </Form.Item>
           </>
         );

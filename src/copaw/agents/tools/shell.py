@@ -5,26 +5,52 @@
 
 import asyncio
 import locale
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
 
-from agentscope.tool import ToolResponse
 from agentscope.message import TextBlock
+from agentscope.tool import ToolResponse
 
-from copaw.constant import WORKING_DIR
+from ...constant import WORKING_DIR
+from ...config.context import get_current_workspace_dir
+from .utils import truncate_shell_output
+
+
+def _kill_process_tree_win32(pid: int) -> None:
+    """Kill a process and all its descendants on Windows via taskkill.
+
+    Uses ``taskkill /F /T`` which forcefully terminates the entire process
+    tree, including grandchild processes that ``Popen.kill()`` would miss.
+    """
+    try:
+        subprocess.call(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except Exception:
+        pass
 
 
 def _execute_subprocess_sync(
     cmd: str,
     cwd: str,
     timeout: int,
+    env: dict | None = None,
 ) -> tuple[int, str, str]:
     """Execute subprocess synchronously in a thread.
 
     This function runs in a separate thread to avoid Windows asyncio
     subprocess limitations.
+
+    Uses ``Popen`` directly instead of ``subprocess.run`` because the
+    latter's internal cleanup after a timeout calls ``communicate()``
+    **without** a timeout, which hangs when descendant processes still
+    hold the pipe handles open (e.g. ``notepad.exe``, ``cmd /k pause``).
 
     Args:
         cmd (`str`):
@@ -33,6 +59,8 @@ def _execute_subprocess_sync(
             The working directory for the command execution.
         timeout (`int`):
             The maximum time (in seconds) allowed for the command to run.
+        env (`dict | None`):
+            Environment variables for the subprocess.
 
     Returns:
         `tuple[int, str, str]`:
@@ -41,28 +69,60 @@ def _execute_subprocess_sync(
             return code will be -1 and stderr will contain timeout information.
     """
     try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
+        # Disable cmd.exe AutoRun (/D) to prevent spurious stderr
+        # from registry-configured startup scripts (e.g. "The system
+        # cannot find the path specified.").  /S prevents quote stripping
+        # so the inner command is passed through unchanged.
+        wrapped = ["cmd", "/D", "/S", "/C", cmd]
+        with subprocess.Popen(
+            wrapped,
+            shell=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
             cwd=cwd,
-            timeout=timeout,
-            encoding=locale.getpreferredencoding(False) or "utf-8",
-            errors="replace",
-            check=True,
-        )
-        return (
-            result.returncode,
-            result.stdout.strip("\n"),
-            result.stderr.strip("\n"),
-        )
-    except subprocess.TimeoutExpired:
-        return (
-            -1,
-            "",
-            f"Command execution exceeded the timeout of {timeout} seconds.",
-        )
+            env=env,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        ) as proc:
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+                return (
+                    proc.returncode,
+                    smart_decode(stdout),
+                    smart_decode(stderr),
+                )
+            except subprocess.TimeoutExpired:
+                _kill_process_tree_win32(proc.pid)
+
+                # Try to drain remaining output after the tree has been killed.
+                # The second communicate() should return quickly now that all
+                # writers are dead.  Guard with a timeout just in case.
+                try:
+                    stdout, stderr = proc.communicate(timeout=5)
+                    stdout_str = smart_decode(stdout)
+                    stderr_str = smart_decode(stderr)
+                except (subprocess.TimeoutExpired, OSError, ValueError):
+                    stdout_str, stderr_str = "", ""
+                    # Force-close pipes to unblock any lingering reader threads
+                    # spawned by the first communicate() call.
+                    for pipe in (proc.stdout, proc.stderr, proc.stdin):
+                        if pipe:
+                            try:
+                                pipe.close()
+                            except OSError:
+                                pass
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        pass
+
+                timeout_msg = f"Command execution exceeded the timeout of {timeout} seconds."
+                if stderr_str:
+                    stderr_str = f"{stderr_str}\n{timeout_msg}"
+                else:
+                    stderr_str = timeout_msg
+                return -1, stdout_str, stderr_str
+
     except Exception as e:
         return -1, "", str(e)
 
@@ -97,7 +157,20 @@ async def execute_shell_command(
     cmd = (command or "").strip()
 
     # Set working directory
-    working_dir = cwd if cwd is not None else WORKING_DIR
+    # Use current workspace_dir from context, fallback to WORKING_DIR
+    if cwd is not None:
+        working_dir = cwd
+    else:
+        working_dir = get_current_workspace_dir() or WORKING_DIR
+
+    # Ensure the venv Python is on PATH for subprocesses
+    env = os.environ.copy()
+    python_bin_dir = str(Path(sys.executable).parent)
+    existing_path = env.get("PATH", "")
+    if existing_path:
+        env["PATH"] = python_bin_dir + os.pathsep + existing_path
+    else:
+        env["PATH"] = python_bin_dir
 
     try:
         if sys.platform == "win32":
@@ -107,6 +180,7 @@ async def execute_shell_command(
                 cmd,
                 str(working_dir),
                 timeout,
+                env,
             )
         else:
             proc = await asyncio.create_subprocess_shell(
@@ -115,6 +189,7 @@ async def execute_shell_command(
                 stderr=asyncio.subprocess.PIPE,
                 bufsize=0,
                 cwd=str(working_dir),
+                env=env,
             )
 
             try:
@@ -124,13 +199,8 @@ async def execute_shell_command(
                     proc.communicate(),
                     timeout=timeout,
                 )
-                encoding = locale.getpreferredencoding(False) or "utf-8"
-                stdout_str = stdout.decode(encoding, errors="replace").strip(
-                    "\n",
-                )
-                stderr_str = stderr.decode(encoding, errors="replace").strip(
-                    "\n",
-                )
+                stdout_str = smart_decode(stdout)
+                stderr_str = smart_decode(stderr)
                 returncode = proc.returncode
 
             except asyncio.TimeoutError:
@@ -160,19 +230,8 @@ async def execute_shell_command(
                         )
                     except asyncio.TimeoutError:
                         stdout, stderr = b"", b""
-                    encoding = locale.getpreferredencoding(False) or "utf-8"
-                    stdout_str = stdout.decode(
-                        encoding,
-                        errors="replace",
-                    ).strip(
-                        "\n",
-                    )
-                    stderr_str = stderr.decode(
-                        encoding,
-                        errors="replace",
-                    ).strip(
-                        "\n",
-                    )
+                    stdout_str = smart_decode(stdout)
+                    stderr_str = smart_decode(stderr)
                     if stderr_str:
                         stderr_str += f"\n{stderr_suffix}"
                     else:
@@ -180,6 +239,10 @@ async def execute_shell_command(
                 except ProcessLookupError:
                     stdout_str = ""
                     stderr_str = stderr_suffix
+
+        # Apply output truncation
+        stdout_str = truncate_shell_output(stdout_str)
+        stderr_str = truncate_shell_output(stderr_str)
 
         # Format the response in a human-friendly way
         if returncode == 0:
@@ -215,3 +278,13 @@ async def execute_shell_command(
                 ),
             ],
         )
+
+
+def smart_decode(data: bytes) -> str:
+    try:
+        decoded_str = data.decode("utf-8")
+    except UnicodeDecodeError:
+        encoding = locale.getpreferredencoding(False) or "utf-8"
+        decoded_str = data.decode(encoding, errors="replace")
+
+    return decoded_str.strip("\n")

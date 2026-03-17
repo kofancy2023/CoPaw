@@ -10,10 +10,8 @@ Example:
 """
 
 
-import json
 import logging
-import os
-from typing import TYPE_CHECKING, Optional, Sequence, Tuple, Type, Any
+from typing import Any, Optional, Sequence, Tuple, Type
 from functools import wraps
 
 from agentscope.formatter import FormatterBase, OpenAIChatFormatter
@@ -28,15 +26,17 @@ except ImportError:  # pragma: no cover - compatibility fallback
     AnthropicChatFormatter = None
     AnthropicChatModel = None
 
+try:
+    from agentscope.formatter import GeminiChatFormatter
+    from agentscope.model import GeminiChatModel
+except ImportError:  # pragma: no cover - compatibility fallback
+    GeminiChatFormatter = None
+    GeminiChatModel = None
+
 from .utils.tool_message_utils import _sanitize_tool_messages
-from ..config.utils import load_config
-from ..local_models import create_local_chat_model
-from ..providers import (
-    get_active_llm_config,
-    get_chat_model_class,
-    get_provider_chat_model,
-    load_providers_json,
-)
+from ..providers import ProviderManager
+from ..providers.retry_chat_model import RetryChatModel
+from ..token_usage import TokenRecordingModelWrapper
 
 
 def _file_url_to_path(url: str) -> str:
@@ -79,11 +79,6 @@ def _monkey_patch(func):
 if agentscope.__version__ in ["1.0.16dev", "1.0.16"]:
     OpenAIChatFormatter.format = _monkey_patch(OpenAIChatFormatter.format)
 
-if TYPE_CHECKING:
-    from ..config.config import AgentsLLMRoutingConfig
-    from ..providers import ModelSlotConfig
-    from ..providers import ResolvedModelConfig
-    from .routing_chat_model import RoutingEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +89,8 @@ _CHAT_MODEL_FORMATTER_MAP: dict[Type[ChatModelBase], Type[FormatterBase]] = {
 }
 if AnthropicChatModel is not None and AnthropicChatFormatter is not None:
     _CHAT_MODEL_FORMATTER_MAP[AnthropicChatModel] = AnthropicChatFormatter
+if GeminiChatModel is not None and GeminiChatFormatter is not None:
+    _CHAT_MODEL_FORMATTER_MAP[GeminiChatModel] = GeminiChatFormatter
 
 
 def _get_formatter_for_chat_model(
@@ -285,83 +282,8 @@ def _strip_top_level_message_name(
     return messages
 
 
-def _resolve_routing_slot(
-    slot: "ModelSlotConfig",
-    *,
-    providers_data,
-) -> Optional[Tuple[str, "ResolvedModelConfig"]]:
-    from ..providers.store import _resolve_slot
-
-    llm_cfg = _resolve_slot(slot, providers_data)
-    if llm_cfg is None:
-        return None
-    return slot.provider_id, llm_cfg
-
-
-def _create_routing_endpoint(
-    provider_id: str,
-    llm_cfg: "ResolvedModelConfig",
-    *,
-    providers_data,
-) -> "RoutingEndpoint":
-    from .routing_chat_model import RoutingEndpoint
-
-    model, chat_model_class = _create_model_instance_for_provider(
-        llm_cfg,
-        provider_id,
-        providers_data=providers_data,
-    )
-    formatter = _create_formatter_instance(chat_model_class)
-    return RoutingEndpoint(
-        provider_id=provider_id,
-        model_name=llm_cfg.model,
-        model=model,
-        formatter=formatter,
-        formatter_family=_get_formatter_for_chat_model(chat_model_class),
-    )
-
-
-def _create_routing_model_and_formatter(
-    local_slot: "ModelSlotConfig",
-    cloud_slot: "ModelSlotConfig",
-    routing_cfg: "AgentsLLMRoutingConfig",
-    providers_data,
-) -> Optional[Tuple[ChatModelBase, FormatterBase]]:
-    from .routing_chat_model import RoutingChatModel
-
-    local_resolved = _resolve_routing_slot(
-        local_slot,
-        providers_data=providers_data,
-    )
-    cloud_resolved = _resolve_routing_slot(
-        cloud_slot,
-        providers_data=providers_data,
-    )
-    if local_resolved is None or cloud_resolved is None:
-        return None
-
-    local_endpoint = _create_routing_endpoint(
-        *local_resolved,
-        providers_data=providers_data,
-    )
-    cloud_endpoint = _create_routing_endpoint(
-        *cloud_resolved,
-        providers_data=providers_data,
-    )
-
-    if local_endpoint.formatter_family is not cloud_endpoint.formatter_family:
-        return None
-
-    model: ChatModelBase = RoutingChatModel(
-        local_endpoint=local_endpoint,
-        cloud_endpoint=cloud_endpoint,
-        routing_cfg=routing_cfg,
-    )
-    return model, local_endpoint.formatter
-
-
 def create_model_and_formatter(
-    llm_cfg: Optional["ResolvedModelConfig"] = None,
+    agent_id: Optional[str] = None,
 ) -> Tuple[ChatModelBase, FormatterBase]:
     """Factory method to create model and formatter instances.
 
@@ -369,213 +291,69 @@ def create_model_and_formatter(
     appropriate chat model class and formatter based on configuration.
 
     Args:
-        llm_cfg: Resolved model configuration. If None, will call
-            get_active_llm_config() to fetch the active configuration.
+        agent_id: Optional agent ID to load agent-specific model config.
+            If None, tries to get from context, then falls back to global.
 
     Returns:
         Tuple of (model_instance, formatter_instance)
 
     Example:
         >>> model, formatter = create_model_and_formatter()
-        >>> # Use with custom config
-        >>> from copaw.providers import get_active_llm_config
-        >>> custom_cfg = get_active_llm_config()
-        >>> model, formatter = create_model_and_formatter(custom_cfg)
     """
-    if llm_cfg is None:
-        routing_cfg = load_config().agents.llm_routing
-        providers_data = load_providers_json()
-        cloud_slot = (
-            routing_cfg.cloud
-            if routing_cfg.cloud is not None
-            else providers_data.active_llm
-        )
-        if (
-            routing_cfg.enabled
-            and routing_cfg.local.provider_id
-            and routing_cfg.local.model
-            and cloud_slot.provider_id
-            and cloud_slot.model
-        ):
-            routed_model = _create_routing_model_and_formatter(
-                routing_cfg.local,
-                cloud_slot,
-                routing_cfg,
-                providers_data,
+    from ..app.agent_context import get_current_agent_id
+    from ..config.config import load_agent_config
+
+    # Determine agent_id (parameter > context > None)
+    if agent_id is None:
+        try:
+            agent_id = get_current_agent_id()
+        except Exception:
+            pass
+
+    # Try to get agent-specific model first
+    model_slot = None
+    if agent_id:
+        try:
+            agent_config = load_agent_config(agent_id)
+            model_slot = agent_config.active_model
+        except Exception:
+            pass
+
+    # Create chat model from agent-specific or global config
+    if model_slot and model_slot.provider_id and model_slot.model:
+        # Use agent-specific model
+        manager = ProviderManager.get_instance()
+        provider = manager.get_provider(model_slot.provider_id)
+        if provider is None:
+            raise ValueError(
+                f"Provider '{model_slot.provider_id}' not found.",
             )
-            if routed_model is not None:
-                return routed_model
+        if provider.is_local:
+            from agentscope.model import create_local_chat_model
 
-        llm_cfg = get_active_llm_config()
-
-    # Create the model instance and determine chat model class
-    model, chat_model_class = _create_model_instance(llm_cfg)
-
-    # Create the formatter based on chat_model_class
-    formatter = _create_formatter_instance(chat_model_class)
-
-    return model, formatter
-
-
-def _create_model_instance(
-    llm_cfg: Optional["ResolvedModelConfig"],
-) -> Tuple[ChatModelBase, Type[ChatModelBase]]:
-    """Create a chat model instance and determine its class.
-
-    Args:
-        llm_cfg: Resolved model configuration
-
-    Returns:
-        Tuple of (model_instance, chat_model_class)
-    """
-    # Handle local models
-    if llm_cfg and llm_cfg.is_local:
-        model = create_local_chat_model(
-            model_id=llm_cfg.model,
-            stream=True,
-            generate_kwargs={"max_tokens": None},
-        )
-        # Local models use OpenAIChatModel-compatible formatter
-        return model, OpenAIChatModel
-
-    # Handle remote models - determine chat_model_class from provider config
-    chat_model_class = _get_chat_model_class_from_provider()
-
-    # Create remote model instance with configuration
-    model = _create_remote_model_instance(llm_cfg, chat_model_class)
-
-    return model, chat_model_class
-
-
-def _create_model_instance_for_provider(
-    llm_cfg: Optional["ResolvedModelConfig"],
-    provider_id: str,
-    *,
-    providers_data,
-) -> Tuple[ChatModelBase, Type[ChatModelBase]]:
-    """Create a model instance using an explicit provider identifier."""
-    if llm_cfg and llm_cfg.is_local:
-        return _create_model_instance(llm_cfg)
-
-    chat_model_class = _get_chat_model_class_for_provider(
-        provider_id,
-        providers_data=providers_data,
-    )
-    model = _create_remote_model_instance(llm_cfg, chat_model_class)
-    return model, chat_model_class
-
-
-def _get_chat_model_class_for_provider(
-    provider_id: str,
-    *,
-    providers_data,
-) -> Type[ChatModelBase]:
-    """Get the chat model class for a specific provider identifier."""
-    chat_model_class = get_chat_model_class("OpenAIChatModel")
-    if not provider_id:
-        return chat_model_class
-
-    chat_model_name = get_provider_chat_model(
-        provider_id,
-        providers_data,
-    )
-    return get_chat_model_class(chat_model_name)
-
-
-def _get_chat_model_class_from_provider() -> Type[ChatModelBase]:
-    """Get the chat model class from provider configuration.
-
-    Returns:
-        Chat model class, defaults to OpenAI-compatible chat model if not found
-    """
-    chat_model_class = get_chat_model_class("OpenAIChatModel")
-    try:
-        providers_data = load_providers_json()
-        provider_id = providers_data.active_llm.provider_id
-        if provider_id:
-            chat_model_name = get_provider_chat_model(
-                provider_id,
-                providers_data,
+            model = create_local_chat_model(
+                model_id=model_slot.model,
+                stream=True,
+                generate_kwargs={"max_tokens": None},
             )
-            chat_model_class = get_chat_model_class(chat_model_name)
-    except Exception as e:
-        logger.debug(
-            "Failed to determine chat model from provider: %s, "
-            "using OpenAI-compatible default chat model",
-            e,
-        )
-    return chat_model_class
-
-
-def _create_remote_model_instance(
-    llm_cfg: Optional["ResolvedModelConfig"],
-    chat_model_class: Type[ChatModelBase],
-) -> ChatModelBase:
-    """Create a remote model instance with configuration.
-
-    Args:
-        llm_cfg: Resolved model configuration
-        chat_model_class: Chat model class to instantiate
-
-    Returns:
-        Configured chat model instance
-    """
-    # Get configuration from llm_cfg or fall back to environment
-    if llm_cfg and (llm_cfg.api_key or llm_cfg.base_url):
-        model_name = llm_cfg.model or "qwen3-max"
-        api_key = llm_cfg.api_key
-        base_url = llm_cfg.base_url
+        else:
+            model = provider.get_chat_model_instance(model_slot.model)
+        provider_id = model_slot.provider_id
     else:
-        logger.warning(
-            "No active LLM configured — "
-            "falling back to DASHSCOPE_API_KEY env var",
+        # Fallback to global active model
+        model = ProviderManager.get_active_chat_model()
+        provider_id = (
+            ProviderManager.get_instance().get_active_model().provider_id
         )
-        model_name = "qwen3-max"
-        api_key = os.getenv("DASHSCOPE_API_KEY", "")
-        base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-    # The Anthropic SDK uses a base_url without the "/v1" suffix (it adds
-    # the versioned path internally), unlike OpenAI-compatible providers.
-    # Strip the trailing "/v1" to avoid a doubled path
-    # (e.g. "/v1/v1/messages").
-    if (
-        AnthropicChatModel is not None
-        and issubclass(chat_model_class, AnthropicChatModel)
-        and base_url
-    ):
-        base_url = base_url.rstrip("/")
-        if base_url.endswith("/v1"):
-            base_url = base_url[:-3]
+    # Create the formatter based on the real model class
+    formatter = _create_formatter_instance(model.__class__)
 
-    dashscope_base_urls = [
-        "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "https://coding.dashscope.aliyuncs.com/v1",
-    ]
+    # Wrap with retry logic for transient LLM API errors
+    wrapped_model = TokenRecordingModelWrapper(provider_id, model)
+    wrapped_model = RetryChatModel(wrapped_model)
 
-    client_kwargs = {"base_url": base_url}
-
-    if base_url in dashscope_base_urls:
-        client_kwargs["default_headers"] = {
-            "x-dashscope-agentapp": json.dumps(
-                {
-                    "agentType": "CoPaw",
-                    "deployType": "UnKnown",
-                    "moduleCode": "model",
-                    "agentCode": "UnKnown",
-                },
-                ensure_ascii=False,
-            ),
-        }
-
-    # Instantiate model
-    model = chat_model_class(
-        model_name,
-        api_key=api_key,
-        stream=True,
-        client_kwargs=client_kwargs,
-    )
-
-    return model
+    return wrapped_model, formatter
 
 
 def _create_formatter_instance(
@@ -596,7 +374,10 @@ def _create_formatter_instance(
     formatter_class = _create_file_block_support_formatter(
         base_formatter_class,
     )
-    return formatter_class()
+    kwargs: dict[str, Any] = {}
+    if issubclass(base_formatter_class, OpenAIChatFormatter):
+        kwargs["promote_tool_result_images"] = True
+    return formatter_class(**kwargs)
 
 
 __all__ = [

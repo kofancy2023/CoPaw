@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import api from "../../../api";
 import type { ProviderInfo, ActiveModelsInfo } from "../../../api/types";
+import { useAgentStore } from "../../../stores/agentStore";
 
 export function useProviders() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -9,9 +10,12 @@ export function useProviders() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { selectedAgent } = useAgentStore();
 
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
+  const fetchAll = useCallback(async (showLoading = true) => {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const [provData, activeData] = await Promise.all([
@@ -31,13 +35,15 @@ export function useProviders() {
       console.error("Failed to load providers:", err);
       setError(msg);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     fetchAll();
-  }, [fetchAll]);
+  }, [fetchAll, selectedAgent]);
 
   return {
     providers,

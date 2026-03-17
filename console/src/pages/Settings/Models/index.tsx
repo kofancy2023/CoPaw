@@ -6,7 +6,6 @@ import {
   PageHeader,
   LoadingState,
   ProviderCard,
-  ModelsSection,
   CustomProviderModal,
 } from "./components";
 import { useTranslation } from "react-i18next";
@@ -22,6 +21,8 @@ function ModelsPage() {
   const { providers, activeModels, loading, error, fetchAll } = useProviders();
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
   const [addProviderOpen, setAddProviderOpen] = useState(false);
+
+  const refreshProvidersSilently = () => fetchAll(false);
 
   const { regularProviders, embeddedProviders } = useMemo(() => {
     const regular: ProviderInfo[] = [];
@@ -47,7 +48,7 @@ function ModelsPage() {
         key={provider.id}
         provider={provider}
         activeModels={activeModels}
-        onSaved={fetchAll}
+        onSaved={refreshProvidersSilently}
         isHover={hoveredCard === provider.id}
         onMouseEnter={() => handleMouseEnter(provider.id)}
         onMouseLeave={handleMouseLeave}
@@ -55,25 +56,14 @@ function ModelsPage() {
     ));
 
   return (
-    <div className={styles.page}>
+    <div className={styles.settingsPage}>
       {loading ? (
         <LoadingState message={t("models.loading")} />
       ) : error ? (
         <LoadingState message={error} error onRetry={fetchAll} />
       ) : (
         <>
-          {/* ---- LLM Section (top) ---- */}
-          <PageHeader
-            title={t("models.llmTitle")}
-            description={t("models.llmDescription")}
-          />
-          <ModelsSection
-            providers={providers}
-            activeModels={activeModels}
-            onSaved={fetchAll}
-          />
-
-          {/* ---- Providers Section (below) ---- */}
+          {/* ---- Providers Section ---- */}
           <div className={styles.providersBlock}>
             <div className={styles.sectionHeaderRow}>
               <PageHeader

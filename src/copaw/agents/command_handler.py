@@ -11,7 +11,7 @@ from agentscope.message import Msg, TextBlock
 
 if TYPE_CHECKING:
     from .memory import MemoryManager
-    from reme.memory.file_based_copaw import CoPawInMemoryMemory
+    from reme.memory.file_based import ReMeInMemoryMemory
 
 logger = logging.getLogger(__name__)
 
@@ -56,20 +56,24 @@ class CommandHandler(ConversationCommandHandlerMixin):
     def __init__(
         self,
         agent_name: str,
-        memory: "CoPawInMemoryMemory",
+        memory: "ReMeInMemoryMemory",
         memory_manager: "MemoryManager | None" = None,
         enable_memory_manager: bool = True,
+        max_input_length: int = 128 * 1024,
     ):
         """Initialize command handler.
 
         Args:
             agent_name: Name of the agent for message creation
-            memory: Agent's CoPawInMemoryMemory instance
+            memory: Agent's ReMeInMemoryMemory instance
             memory_manager: Optional memory manager instance
             enable_memory_manager: Whether memory manager is enabled
+            max_input_length: Maximum input length in tokens for context
+                window (default: 128K = 131072)
         """
         self.agent_name = agent_name
         self.memory = memory
+        self.max_input_length = max_input_length
         self.memory_manager = memory_manager
         self._enable_memory_manager = enable_memory_manager
 
@@ -197,7 +201,9 @@ class CommandHandler(ConversationCommandHandlerMixin):
         _args: str = "",
     ) -> Msg:
         """Process /history command."""
-        history_str = await self.memory.get_history_str()
+        history_str = await self.memory.get_history_str(
+            max_input_length=self.max_input_length,
+        )
         return await self._make_system_msg(history_str)
 
     async def _process_await_summary(

@@ -28,11 +28,15 @@ import {
   Box,
   Globe,
   Settings,
+  Shield,
   Plug,
+  Wrench,
   PanelLeftClose,
   PanelLeftOpen,
   Copy,
   Check,
+  BarChart3,
+  Bot,
 } from "lucide-react";
 import api from "../api";
 import styles from "./index.module.less";
@@ -55,11 +59,15 @@ const KEY_TO_PATH: Record<string, string> = {
   "cron-jobs": "/cron-jobs",
   heartbeat: "/heartbeat",
   skills: "/skills",
+  tools: "/tools",
   mcp: "/mcp",
   workspace: "/workspace",
+  agents: "/agents",
   models: "/models",
   environments: "/environments",
   "agent-config": "/agent-config",
+  security: "/security",
+  "token-usage": "/token-usage",
 };
 
 const UPDATE_MD: Record<string, string> = {
@@ -317,6 +325,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           icon: <Briefcase size={16} />,
         },
         { key: "skills", label: t("nav.skills"), icon: <Sparkles size={16} /> },
+        { key: "tools", label: t("nav.tools"), icon: <Wrench size={16} /> },
         { key: "mcp", label: t("nav.mcp"), icon: <Plug size={16} /> },
         {
           key: "agent-config",
@@ -330,11 +339,22 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       label: t("nav.settings"),
       icon: <Cpu size={16} />,
       children: [
+        { key: "agents", label: t("nav.agents"), icon: <Bot size={16} /> },
         { key: "models", label: t("nav.models"), icon: <Box size={16} /> },
         {
           key: "environments",
           label: t("nav.environments"),
           icon: <Globe size={16} />,
+        },
+        {
+          key: "security",
+          label: t("nav.security"),
+          icon: <Shield size={16} />,
+        },
+        {
+          key: "token-usage",
+          label: t("nav.tokenUsage"),
+          icon: <BarChart3 size={16} />,
         },
       ],
     },
